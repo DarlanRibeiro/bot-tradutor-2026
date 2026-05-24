@@ -61,7 +61,7 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def voltar_original(context, chat_id, message_id, texto_original):
-    await asyncio.sleep(60)
+    await asyncio.sleep(120)
 
     try:
         await context.bot.edit_message_text(
