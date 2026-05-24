@@ -12,7 +12,7 @@ from telegram import (
 
 from telegram.ext import (
     Application,
-    ChannelPostHandler,
+    MessageHandler,
     CallbackQueryHandler,
     ContextTypes,
     filters
@@ -186,9 +186,9 @@ def main():
 
     # Detecta novos posts no canal
     app.add_handler(
-        ChannelPostHandler(
-            novo_post,
-            filters.TEXT
+        MessageHandler(
+            filters.ChatType.CHANNEL & filters.TEXT,
+            novo_post
         )
     )
 
