@@ -11,7 +11,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN não encontrado. Configure a variável no Railway.")
+    raise ValueError("BOT_TOKEN não encontrado. Configure a variável no Railway/Render.")
 
 LANGS = {
     "china": ("zh-CN", "🇨🇳 Chinês"),
@@ -35,7 +35,11 @@ def teclado_bandeiras(message_id):
     ]])
 
 
-async def editar_post(context, chat_id, message_id, texto, tem_caption):
+def texto_menu():
+    return "🌐 Traduzir este post:"
+
+
+async def editar_original(context, chat_id, message_id, texto, tem_caption):
     if tem_caption:
         await context.bot.edit_message_caption(
             chat_id=chat_id,
@@ -58,20 +62,12 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg:
         return
 
-    print(
-        f"RECEBIDO | chat={msg.chat_id} | "
-        f"type={msg.chat.type} | "
-        f"id={msg.message_id} | "
-        f"text={bool(msg.text)} | "
-        f"caption={bool(msg.caption)} | "
-        f"photo={bool(msg.photo)} | "
-        f"video={bool(msg.video)}"
-    )
-
     texto = msg.text or msg.caption
 
     if not texto:
-        print("Ignorado: post sem texto/legenda.")
+        return
+
+    if msg.from_user and msg.from_user.is_bot:
         return
 
     tem_caption = bool(msg.caption)
@@ -79,7 +75,9 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     POSTS_ORIGINAIS[msg.message_id] = {
         "chat_id": msg.chat_id,
         "texto": texto,
-        "tem_caption": tem_caption
+        "tem_caption": tem_caption,
+        "modo": "original",
+        "bot_message_id": None
     }
 
     try:
@@ -89,26 +87,63 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=teclado_bandeiras(msg.message_id)
         )
 
-        print(f"Botões adicionados ao post {msg.message_id}")
+        print(f"Botões adicionados ao post original {msg.message_id}")
 
     except Exception as e:
-        print(f"Erro ao adicionar botões: {e}")
+        print(f"Não foi possível editar o post original {msg.message_id}: {e}")
 
-async def voltar_original(context, chat_id, message_id, texto_original, tem_caption):
+        try:
+            resposta = await context.bot.send_message(
+                chat_id=msg.chat_id,
+                text=texto_menu(),
+                reply_to_message_id=msg.message_id,
+                reply_markup=teclado_bandeiras(msg.message_id)
+            )
+
+            POSTS_ORIGINAIS[msg.message_id]["modo"] = "mensagem_bot"
+            POSTS_ORIGINAIS[msg.message_id]["bot_message_id"] = resposta.message_id
+
+            print(f"Mensagem de tradução criada abaixo do post {msg.message_id}")
+
+        except Exception as erro:
+            print(f"Erro ao criar mensagem de tradução: {erro}")
+
+
+async def voltar_original(context, post_id):
     await asyncio.sleep(120)
 
+    dados = POSTS_ORIGINAIS.get(post_id)
+
+    if not dados:
+        return
+
+    chat_id = dados["chat_id"]
+    texto_original = dados["texto"]
+    tem_caption = dados["tem_caption"]
+    modo = dados["modo"]
+    bot_message_id = dados.get("bot_message_id")
+
     try:
-        await editar_post(
-            context,
-            chat_id,
-            message_id,
-            texto_original,
-            tem_caption
-        )
-        print(f"Post {message_id} voltou ao original")
+        if modo == "original":
+            await editar_original(
+                context,
+                chat_id,
+                post_id,
+                texto_original,
+                tem_caption
+            )
+        else:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=bot_message_id,
+                text=texto_menu(),
+                reply_markup=teclado_bandeiras(post_id)
+            )
+
+        print(f"Post {post_id} voltou ao estado original/menu")
 
     except Exception as e:
-        print(f"Erro ao voltar original: {e}")
+        print(f"Erro ao voltar original/menu: {e}")
 
 
 async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -116,18 +151,20 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("Traduzindo por 2 minutos...")
 
     try:
-        _, pais, message_id = query.data.split(":")
-        message_id = int(message_id)
+        _, pais, post_id = query.data.split(":")
+        post_id = int(post_id)
 
-        dados_post = POSTS_ORIGINAIS.get(message_id)
+        dados = POSTS_ORIGINAIS.get(post_id)
 
-        if not dados_post:
+        if not dados:
             await query.answer("Texto original não encontrado.", show_alert=True)
             return
 
-        chat_id = dados_post["chat_id"]
-        texto_original = dados_post["texto"]
-        tem_caption = dados_post["tem_caption"]
+        chat_id = dados["chat_id"]
+        texto_original = dados["texto"]
+        tem_caption = dados["tem_caption"]
+        modo = dados["modo"]
+        bot_message_id = dados.get("bot_message_id")
 
         idioma, nome_idioma = LANGS[pais]
 
@@ -142,22 +179,30 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(traducao) > 4000:
             traducao = traducao[:4000]
 
-        await editar_post(
-            context,
-            chat_id,
-            message_id,
-            traducao,
-            tem_caption
+        if modo == "original":
+            await editar_original(
+                context,
+                chat_id,
+                post_id,
+                traducao,
+                tem_caption
+            )
+        else:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=bot_message_id,
+                text=f"{nome_idioma}\n\n{traducao}",
+                reply_markup=teclado_bandeiras(post_id)
+            )
+
+        if post_id in TAREFAS_RETORNO:
+            TAREFAS_RETORNO[post_id].cancel()
+
+        TAREFAS_RETORNO[post_id] = asyncio.create_task(
+            voltar_original(context, post_id)
         )
 
-        if message_id in TAREFAS_RETORNO:
-            TAREFAS_RETORNO[message_id].cancel()
-
-        TAREFAS_RETORNO[message_id] = asyncio.create_task(
-            voltar_original(context, chat_id, message_id, texto_original, tem_caption)
-        )
-
-        print(f"Post {message_id} traduzido para {nome_idioma}")
+        print(f"Post {post_id} traduzido para {nome_idioma}")
 
     except Exception as e:
         print(f"Erro na tradução: {e}")
