@@ -157,7 +157,7 @@ def main():
 
     app.add_handler(
         MessageHandler(
-            filters.ChatType.CHANNEL & (filters.TEXT | filters.Caption()),
+            filters.ChatType.CHANNEL,
             novo_post
         )
     )
