@@ -53,14 +53,25 @@ async def editar_post(context, chat_id, message_id, texto, tem_caption):
 
 
 async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.channel_post or update.message
+    msg = update.effective_message
 
     if not msg:
         return
 
+    print(
+        f"RECEBIDO | chat={msg.chat_id} | "
+        f"type={msg.chat.type} | "
+        f"id={msg.message_id} | "
+        f"text={bool(msg.text)} | "
+        f"caption={bool(msg.caption)} | "
+        f"photo={bool(msg.photo)} | "
+        f"video={bool(msg.video)}"
+    )
+
     texto = msg.text or msg.caption
 
     if not texto:
+        print("Ignorado: post sem texto/legenda.")
         return
 
     tem_caption = bool(msg.caption)
@@ -77,11 +88,11 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_id=msg.message_id,
             reply_markup=teclado_bandeiras(msg.message_id)
         )
+
         print(f"Botões adicionados ao post {msg.message_id}")
 
     except Exception as e:
         print(f"Erro ao adicionar botões: {e}")
-
 
 async def voltar_original(context, chat_id, message_id, texto_original, tem_caption):
     await asyncio.sleep(120)
@@ -157,7 +168,7 @@ def main():
 
     app.add_handler(
         MessageHandler(
-            filters.ChatType.CHANNEL,
+            filters.ALL,
             novo_post
         )
     )
