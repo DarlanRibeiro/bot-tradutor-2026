@@ -13,6 +13,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN não encontrado. Configure a variável no Railway/Render.")
 
+CASA_DOS_NINJAS_ID = -1002884618014
+
 LANGS = {
     "china": ("zh-CN", "🇨🇳 Chinês"),
     "brasil": ("pt", "🇧🇷 Português Brasil"),
@@ -62,6 +64,21 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg:
         return
 
+    # CASA DOS NINJAS:
+    # apaga somente a mensagem "Traduzir este post"
+    # e ignora todas as outras mensagens do grupo.
+    if msg.chat_id == CASA_DOS_NINJAS_ID:
+        if msg.text and "🌐 Traduzir este post" in msg.text:
+            try:
+                await context.bot.delete_message(
+                    chat_id=msg.chat_id,
+                    message_id=msg.message_id
+                )
+            except:
+                pass
+
+        return
+
     texto = msg.text or msg.caption
 
     if not texto:
@@ -87,11 +104,7 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=teclado_bandeiras(msg.message_id)
         )
 
-        print(f"Botões adicionados ao post original {msg.message_id}")
-
-    except Exception as e:
-        print(f"Não foi possível editar o post original {msg.message_id}: {e}")
-
+    except Exception:
         try:
             resposta = await context.bot.send_message(
                 chat_id=msg.chat_id,
@@ -103,10 +116,8 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             POSTS_ORIGINAIS[msg.message_id]["modo"] = "mensagem_bot"
             POSTS_ORIGINAIS[msg.message_id]["bot_message_id"] = resposta.message_id
 
-            print(f"Mensagem de tradução criada abaixo do post {msg.message_id}")
-
-        except Exception as erro:
-            print(f"Erro ao criar mensagem de tradução: {erro}")
+        except Exception:
+            pass
 
 
 async def voltar_original(context, post_id):
@@ -140,10 +151,8 @@ async def voltar_original(context, post_id):
                 reply_markup=teclado_bandeiras(post_id)
             )
 
-        print(f"Post {post_id} voltou ao estado original/menu")
-
-    except Exception as e:
-        print(f"Erro ao voltar original/menu: {e}")
+    except Exception:
+        pass
 
 
 async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -202,10 +211,8 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
             voltar_original(context, post_id)
         )
 
-        print(f"Post {post_id} traduzido para {nome_idioma}")
-
-    except Exception as e:
-        print(f"Erro na tradução: {e}")
+    except Exception:
+        pass
 
 
 def main():
