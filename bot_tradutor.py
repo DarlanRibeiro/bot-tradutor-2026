@@ -40,12 +40,17 @@ def teclado_bandeiras(message_id):
 async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.channel_post
 
-    if not msg or not msg.text:
+    if not msg:
+        return
+
+    texto = msg.text or msg.caption
+
+    if not texto:
         return
 
     POSTS_ORIGINAIS[msg.message_id] = {
         "chat_id": msg.chat_id,
-        "texto": msg.text
+        "texto": texto
     }
 
     try:
