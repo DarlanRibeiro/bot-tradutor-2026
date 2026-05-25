@@ -26,19 +26,34 @@ TAREFAS_RETORNO = {}
 
 
 def teclado_bandeiras(message_id):
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🇨🇳", callback_data=f"traduzir:china:{message_id}"),
-            InlineKeyboardButton("🇧🇷", callback_data=f"traduzir:brasil:{message_id}"),
-            InlineKeyboardButton("🇪🇸", callback_data=f"traduzir:espanha:{message_id}"),
-            InlineKeyboardButton("🇵🇹", callback_data=f"traduzir:portugal:{message_id}"),
-            InlineKeyboardButton("🇺🇸", callback_data=f"traduzir:eua:{message_id}"),
-        ]
-    ])
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🇨🇳", callback_data=f"traduzir:china:{message_id}"),
+        InlineKeyboardButton("🇧🇷", callback_data=f"traduzir:brasil:{message_id}"),
+        InlineKeyboardButton("🇪🇸", callback_data=f"traduzir:espanha:{message_id}"),
+        InlineKeyboardButton("🇵🇹", callback_data=f"traduzir:portugal:{message_id}"),
+        InlineKeyboardButton("🇺🇸", callback_data=f"traduzir:eua:{message_id}"),
+    ]])
+
+
+async def editar_post(context, chat_id, message_id, texto, tem_caption):
+    if tem_caption:
+        await context.bot.edit_message_caption(
+            chat_id=chat_id,
+            message_id=message_id,
+            caption=texto,
+            reply_markup=teclado_bandeiras(message_id)
+        )
+    else:
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=texto,
+            reply_markup=teclado_bandeiras(message_id)
+        )
 
 
 async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.channel_post
+    msg = update.channel_post or update.message
 
     if not msg:
         return
@@ -48,9 +63,12 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not texto:
         return
 
+    tem_caption = bool(msg.caption)
+
     POSTS_ORIGINAIS[msg.message_id] = {
         "chat_id": msg.chat_id,
-        "texto": texto
+        "texto": texto,
+        "tem_caption": tem_caption
     }
 
     try:
@@ -65,15 +83,16 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Erro ao adicionar botões: {e}")
 
 
-async def voltar_original(context, chat_id, message_id, texto_original):
+async def voltar_original(context, chat_id, message_id, texto_original, tem_caption):
     await asyncio.sleep(120)
 
     try:
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=texto_original,
-            reply_markup=teclado_bandeiras(message_id)
+        await editar_post(
+            context,
+            chat_id,
+            message_id,
+            texto_original,
+            tem_caption
         )
         print(f"Post {message_id} voltou ao original")
 
@@ -83,7 +102,7 @@ async def voltar_original(context, chat_id, message_id, texto_original):
 
 async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer("Traduzindo por 1 minuto...")
+    await query.answer("Traduzindo por 2 minutos...")
 
     try:
         _, pais, message_id = query.data.split(":")
@@ -97,32 +116,34 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         chat_id = dados_post["chat_id"]
         texto_original = dados_post["texto"]
+        tem_caption = dados_post["tem_caption"]
 
         idioma, nome_idioma = LANGS[pais]
 
-        traducao = GoogleTranslator(
-            source="auto",
-            target=idioma
-        ).translate(texto_original)
+        traducao = GoogleTranslator(source="auto", target=idioma).translate(texto_original)
 
         if pais == "portugal":
             traducao = traducao.replace("você", "tu").replace("Você", "Tu")
 
+        if len(traducao) > 1000 and tem_caption:
+            traducao = traducao[:1000]
+
         if len(traducao) > 4000:
             traducao = traducao[:4000]
 
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=traducao,
-            reply_markup=teclado_bandeiras(message_id)
+        await editar_post(
+            context,
+            chat_id,
+            message_id,
+            traducao,
+            tem_caption
         )
 
         if message_id in TAREFAS_RETORNO:
             TAREFAS_RETORNO[message_id].cancel()
 
         TAREFAS_RETORNO[message_id] = asyncio.create_task(
-            voltar_original(context, chat_id, message_id, texto_original)
+            voltar_original(context, chat_id, message_id, texto_original, tem_caption)
         )
 
         print(f"Post {message_id} traduzido para {nome_idioma}")
@@ -136,7 +157,7 @@ def main():
 
     app.add_handler(
         MessageHandler(
-            filters.ChatType.CHANNEL & filters.TEXT,
+            filters.ChatType.CHANNEL & (filters.TEXT | filters.Caption()),
             novo_post
         )
     )
@@ -148,7 +169,7 @@ def main():
         )
     )
 
-    print("BOT DE TRADUÇÃO iNICIADO")
+    print("BOT DE TRADUÇÃO INICIADO")
     app.run_polling()
 
 
