@@ -121,21 +121,9 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # se falhar, usa fallback
+
     except Exception:
-
-        try:
-            resposta = await context.bot.send_message(
-                chat_id=msg.chat_id,
-                text=texto_menu(),
-                reply_to_message_id=msg.message_id,
-                reply_markup=teclado_bandeiras(msg.message_id)
-            )
-
-            POSTS_ORIGINAIS[msg.message_id]["modo"] = "mensagem_bot"
-            POSTS_ORIGINAIS[msg.message_id]["bot_message_id"] = resposta.message_id
-
-        except Exception:
-            pass
+        pass
 
 
 async def voltar_original(context, post_id):
