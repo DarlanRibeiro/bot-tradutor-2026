@@ -194,11 +194,18 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         chat_id = dados["chat_id"]
         texto_original = dados["texto"]
+        tem_caption = dados["tem_caption"]
+        modo = dados["modo"]
+        bot_message_id = dados.get("bot_message_id")
+
+        # 🇧🇷 = voltar imediatamente ao original
         if pais == "brasil":
+
             if post_id in TAREFAS_RETORNO:
                 TAREFAS_RETORNO[post_id].cancel()
 
             if modo == "original":
+
                 await editar_original(
                     context,
                     chat_id,
@@ -207,7 +214,9 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     tem_caption,
                     dados.get("entities")
                 )
+
             else:
+
                 await context.bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=bot_message_id,
@@ -216,9 +225,6 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
             return
-        tem_caption = dados["tem_caption"]
-        modo = dados["modo"]
-        bot_message_id = dados.get("bot_message_id")
 
         idioma, nome_idioma = LANGS[pais]
 
@@ -236,7 +242,7 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(traducao) > 4000:
             traducao = traducao[:4000]
 
-        # SEMPRE tenta traduzir o post original primeiro
+        # tenta traduzir o post original
         if modo == "original":
 
             try:
@@ -250,18 +256,8 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     None
                 )
 
-            # se Telegram bloquear, usa fallback
             except Exception:
-
-                resposta = await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"{nome_idioma}\n\n{traducao}",
-                    reply_to_message_id=post_id,
-                    reply_markup=teclado_bandeiras(post_id)
-                )
-
-                POSTS_ORIGINAIS[post_id]["modo"] = "mensagem_bot"
-                POSTS_ORIGINAIS[post_id]["bot_message_id"] = resposta.message_id
+                pass
 
         else:
 
