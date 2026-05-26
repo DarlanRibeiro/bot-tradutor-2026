@@ -194,6 +194,28 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         chat_id = dados["chat_id"]
         texto_original = dados["texto"]
+        if pais == "brasil":
+            if post_id in TAREFAS_RETORNO:
+                TAREFAS_RETORNO[post_id].cancel()
+
+            if modo == "original":
+                await editar_original(
+                    context,
+                    chat_id,
+                    post_id,
+                    texto_original,
+                    tem_caption,
+                    dados.get("entities")
+                )
+            else:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=bot_message_id,
+                    text=texto_menu(),
+                    reply_markup=teclado_bandeiras(post_id)
+                )
+
+            return
         tem_caption = dados["tem_caption"]
         modo = dados["modo"]
         bot_message_id = dados.get("bot_message_id")
