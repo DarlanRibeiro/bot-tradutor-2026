@@ -64,9 +64,6 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg:
         return
 
-    # CASA DOS NINJAS:
-    # apaga somente a mensagem "Traduzir este post"
-    # e ignora todas as outras mensagens do grupo.
     if msg.chat_id == CASA_DOS_NINJAS_ID:
         if msg.text and "🌐 Traduzir este post" in msg.text:
             try:
@@ -74,9 +71,8 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=msg.chat_id,
                     message_id=msg.message_id
                 )
-            except:
+            except Exception:
                 pass
-
         return
 
     texto = msg.text or msg.caption
@@ -84,7 +80,7 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not texto:
         return
 
-    if msg.from_user and msg.from_user.is_bot:
+    if msg.text and "🌐 Traduzir este post" in msg.text:
         return
 
     tem_caption = bool(msg.caption)
@@ -136,13 +132,7 @@ async def voltar_original(context, post_id):
 
     try:
         if modo == "original":
-            await editar_original(
-                context,
-                chat_id,
-                post_id,
-                texto_original,
-                tem_caption
-            )
+            await editar_original(context, chat_id, post_id, texto_original, tem_caption)
         else:
             await context.bot.edit_message_text(
                 chat_id=chat_id,
@@ -150,14 +140,17 @@ async def voltar_original(context, post_id):
                 text=texto_menu(),
                 reply_markup=teclado_bandeiras(post_id)
             )
-
     except Exception:
         pass
 
 
 async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer("Traduzindo por 2 minutos...")
+
+    try:
+        await query.answer("Traduzindo por 2 minutos...")
+    except Exception:
+        pass
 
     try:
         _, pais, post_id = query.data.split(":")
@@ -166,7 +159,10 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
         dados = POSTS_ORIGINAIS.get(post_id)
 
         if not dados:
-            await query.answer("Texto original não encontrado.", show_alert=True)
+            try:
+                await query.answer("Texto original não encontrado.", show_alert=True)
+            except Exception:
+                pass
             return
 
         chat_id = dados["chat_id"]
@@ -189,13 +185,7 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
             traducao = traducao[:4000]
 
         if modo == "original":
-            await editar_original(
-                context,
-                chat_id,
-                post_id,
-                traducao,
-                tem_caption
-            )
+            await editar_original(context, chat_id, post_id, traducao, tem_caption)
         else:
             await context.bot.edit_message_text(
                 chat_id=chat_id,
@@ -218,19 +208,8 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(
-        MessageHandler(
-            filters.ALL,
-            novo_post
-        )
-    )
-
-    app.add_handler(
-        CallbackQueryHandler(
-            clicar_bandeira,
-            pattern="^traduzir:"
-        )
-    )
+    app.add_handler(MessageHandler(filters.ALL, novo_post))
+    app.add_handler(CallbackQueryHandler(clicar_bandeira, pattern="^traduzir:"))
 
     print("BOT DE TRADUÇÃO INICIADO")
     app.run_polling()
