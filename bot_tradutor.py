@@ -178,7 +178,7 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
     try:
-        await query.answer("Traduzindo por 2 minutos...")
+        await query.answer("Traduzindo por 1 minuto...")
     except Exception:
         pass
 
