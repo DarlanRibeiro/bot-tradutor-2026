@@ -41,12 +41,20 @@ def texto_menu():
     return "🌐 Traduzir este post:"
 
 
-async def editar_original(context, chat_id, message_id, texto, tem_caption):
+async def editar_original(
+    context,
+    chat_id,
+    message_id,
+    texto,
+    tem_caption,
+    entities=None
+):
     if tem_caption:
         await context.bot.edit_message_caption(
             chat_id=chat_id,
             message_id=message_id,
             caption=texto,
+            caption_entities=entities,
             reply_markup=teclado_bandeiras(message_id)
         )
     else:
@@ -54,6 +62,7 @@ async def editar_original(context, chat_id, message_id, texto, tem_caption):
             chat_id=chat_id,
             message_id=message_id,
             text=texto,
+            entities=entities,
             reply_markup=teclado_bandeiras(message_id)
         )
 
@@ -64,7 +73,10 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg:
         return
 
+    # CASA DOS NINJAS
     if msg.chat_id == CASA_DOS_NINJAS_ID:
+
+        # apaga silenciosamente apenas a mensagem fallback
         if msg.text and "🌐 Traduzir este post" in msg.text:
             try:
                 await context.bot.delete_message(
@@ -73,6 +85,7 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception:
                 pass
+
         return
 
     texto = msg.text or msg.caption
@@ -80,19 +93,24 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not texto:
         return
 
+    # evita loop
     if msg.text and "🌐 Traduzir este post" in msg.text:
         return
 
     tem_caption = bool(msg.caption)
 
+    entities = msg.caption_entities if tem_caption else msg.entities
+
     POSTS_ORIGINAIS[msg.message_id] = {
         "chat_id": msg.chat_id,
         "texto": texto,
         "tem_caption": tem_caption,
+        "entities": entities,
         "modo": "original",
         "bot_message_id": None
     }
 
+    # PRIMEIRO tenta colocar bandeiras direto no post
     try:
         await context.bot.edit_message_reply_markup(
             chat_id=msg.chat_id,
@@ -100,7 +118,11 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=teclado_bandeiras(msg.message_id)
         )
 
+        return
+
+    # se falhar, usa fallback
     except Exception:
+
         try:
             resposta = await context.bot.send_message(
                 chat_id=msg.chat_id,
@@ -117,6 +139,7 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def voltar_original(context, post_id):
+
     await asyncio.sleep(120)
 
     dados = POSTS_ORIGINAIS.get(post_id)
@@ -127,24 +150,38 @@ async def voltar_original(context, post_id):
     chat_id = dados["chat_id"]
     texto_original = dados["texto"]
     tem_caption = dados["tem_caption"]
+    entities = dados.get("entities")
     modo = dados["modo"]
     bot_message_id = dados.get("bot_message_id")
 
     try:
+
         if modo == "original":
-            await editar_original(context, chat_id, post_id, texto_original, tem_caption)
+
+            await editar_original(
+                context,
+                chat_id,
+                post_id,
+                texto_original,
+                tem_caption,
+                entities
+            )
+
         else:
+
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=bot_message_id,
                 text=texto_menu(),
                 reply_markup=teclado_bandeiras(post_id)
             )
+
     except Exception:
         pass
 
 
 async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     query = update.callback_query
 
     try:
@@ -153,16 +190,13 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
     try:
+
         _, pais, post_id = query.data.split(":")
         post_id = int(post_id)
 
         dados = POSTS_ORIGINAIS.get(post_id)
 
         if not dados:
-            try:
-                await query.answer("Texto original não encontrado.", show_alert=True)
-            except Exception:
-                pass
             return
 
         chat_id = dados["chat_id"]
@@ -173,7 +207,10 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         idioma, nome_idioma = LANGS[pais]
 
-        traducao = GoogleTranslator(source="auto", target=idioma).translate(texto_original)
+        traducao = GoogleTranslator(
+            source="auto",
+            target=idioma
+        ).translate(texto_original)
 
         if pais == "portugal":
             traducao = traducao.replace("você", "tu").replace("Você", "Tu")
@@ -184,9 +221,35 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(traducao) > 4000:
             traducao = traducao[:4000]
 
+        # SEMPRE tenta traduzir o post original primeiro
         if modo == "original":
-            await editar_original(context, chat_id, post_id, traducao, tem_caption)
+
+            try:
+
+                await editar_original(
+                    context,
+                    chat_id,
+                    post_id,
+                    traducao,
+                    tem_caption,
+                    None
+                )
+
+            # se Telegram bloquear, usa fallback
+            except Exception:
+
+                resposta = await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"{nome_idioma}\n\n{traducao}",
+                    reply_to_message_id=post_id,
+                    reply_markup=teclado_bandeiras(post_id)
+                )
+
+                POSTS_ORIGINAIS[post_id]["modo"] = "mensagem_bot"
+                POSTS_ORIGINAIS[post_id]["bot_message_id"] = resposta.message_id
+
         else:
+
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=bot_message_id,
@@ -206,12 +269,25 @@ async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
+
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(MessageHandler(filters.ALL, novo_post))
-    app.add_handler(CallbackQueryHandler(clicar_bandeira, pattern="^traduzir:"))
+    app.add_handler(
+        MessageHandler(
+            filters.ALL,
+            novo_post
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            clicar_bandeira,
+            pattern="^traduzir:"
+        )
+    )
 
     print("BOT DE TRADUÇÃO INICIADO")
+
     app.run_polling()
 
 
