@@ -75,9 +75,14 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # CASA DOS NINJAS
     if msg.chat_id == CASA_DOS_NINJAS_ID:
-
-        # apaga silenciosamente apenas a mensagem fallback
-        if msg.text and "🌐 Traduzir este post" in msg.text:
+        if msg.text and (
+            "🌐 Traduzir este post" in msg.text
+            or msg.text.startswith("🇨🇳 Chinês")
+            or msg.text.startswith("🇧🇷 Português Brasil")
+            or msg.text.startswith("🇪🇸 Espanhol")
+            or msg.text.startswith("🇵🇹 Português Portugal")
+            or msg.text.startswith("🇺🇸 Inglês")
+        ):
             try:
                 await context.bot.delete_message(
                     chat_id=msg.chat_id,
