@@ -203,7 +203,7 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def voltar_original(context, post_id):
-    await asyncio.sleep(60)
+    await asyncio.sleep(30)
 
     dados = POSTS_ORIGINAIS.get(post_id)
 
