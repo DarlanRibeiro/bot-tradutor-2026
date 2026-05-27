@@ -165,6 +165,11 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         return
 
+    # IMPORTANTE:
+    # ignora edições para não salvar tradução como se fosse original
+    if msg.edit_date:
+        return
+
     texto = msg.text or msg.caption
 
     if not texto:
