@@ -52,6 +52,18 @@ async def iniciar_banco():
     global DB_POOL
     DB_POOL = await asyncpg.create_pool(DATABASE_URL)
 
+async def limpar_posts_antigos():
+    if not DB_POOL:
+        return
+
+    async with DB_POOL.acquire() as conn:
+        removidos = await conn.execute("""
+            DELETE FROM telegram_posts
+            WHERE criado_em < NOW() - INTERVAL '30 days'
+        """)
+
+    print(f"LIMPEZA BANCO: {removidos}")
+
 
 def entities_para_json(entities):
     if not entities:
@@ -314,6 +326,7 @@ def main():
 
     async def post_init(app):
         await iniciar_banco()
+        await limpar_posts_antigos()
 
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
