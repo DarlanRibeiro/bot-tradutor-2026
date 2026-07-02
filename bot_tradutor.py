@@ -307,11 +307,22 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log(f"EDIT_DATE: {msg.edit_date}")
 
     if msg.chat_id == CASA_DOS_NINJAS_ID:
-        if eh_mensagem_auxiliar_do_bot(msg):
+
+        # Nunca apagar mensagens do canal espelhadas.
+        # Só apagar mensagens criadas pelo próprio bot.
+        if (
+            msg.from_user
+            and msg.from_user.id == context.bot.id
+            and eh_mensagem_auxiliar_do_bot(msg)
+        ):
             try:
-                await context.bot.delete_message(chat_id=msg.chat_id, message_id=msg.message_id)
-            except Exception as erro:
-                log(f"ERRO AO APAGAR AUXILIAR: {erro}")
+                await context.bot.delete_message(
+                    chat_id=msg.chat_id,
+                    message_id=msg.message_id
+                )
+            except Exception as e:
+                print(f"ERRO AO APAGAR MENSAGEM AUXILIAR: {e}")
+
         return
 
     texto = msg.text or msg.caption
