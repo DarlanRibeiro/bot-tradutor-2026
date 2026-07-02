@@ -205,7 +205,7 @@ def dividir_texto_para_traducao(texto, limite=4500):
             if len(bloco) <= limite:
                 atual = bloco
             else:
-                # Último recurso: quebra por frases/palavrass, sem perder conteúdo.
+                # Último recurso: quebra por frases/palavras, sem perder conteúdo.
                 palavras = bloco.split(" ")
                 pedaco = ""
                 for palavra in palavras:
