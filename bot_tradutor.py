@@ -84,7 +84,7 @@ async def iniciar_banco():
                 modo TEXT DEFAULT 'original',
                 bot_message_id BIGINT,
                 criado_em TIMESTAMPTZ DEFAULT NOW(),
-                atualizado_em TIMESTAMPTZ DEFAULT NOW(),
+                
                 UNIQUE (chat_id, message_id)
             );
         """)
@@ -124,8 +124,7 @@ async def salvar_post_banco(message_id, dados):
                 tem_caption = EXCLUDED.tem_caption,
                 entities = EXCLUDED.entities,
                 modo = EXCLUDED.modo,
-                bot_message_id = EXCLUDED.bot_message_id,
-                atualizado_em = NOW();
+                bot_message_id = EXCLUDED.bot_message_id;
             """,
             int(message_id),
             int(dados["chat_id"]),
@@ -173,7 +172,7 @@ async def atualizar_modo_banco(chat_id, message_id, modo):
         await conn.execute(
             """
             UPDATE telegram_posts
-            SET modo = $3, atualizado_em = NOW()
+            SET modo = $3
             WHERE chat_id = $1 AND message_id = $2
             """,
             int(chat_id),
