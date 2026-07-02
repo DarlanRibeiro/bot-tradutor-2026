@@ -1,47 +1,29 @@
 import os
 import json
 import asyncio
-import logging
-from typing import Optional, Tuple, Dict, Any
-
+import re
 import asyncpg
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
-from telegram.error import BadRequest, Forbidden, TimedOut, NetworkError, TelegramError
-from telegram.ext import (
-    Application,
-    MessageHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    filters,
-)
+from telegram.ext import Application, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 load_dotenv()
-
-# =========================
-# CONFIGURAÇÕES
-# =========================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN não encontrado no .env ou nas variáveis do Railway.")
+    raise ValueError("BOT_TOKEN não encontrado.")
 
 if not DATABASE_URL:
-    raise ValueError("DATABASE_URL não encontrado no .env ou nas variáveis do Railway.")
+    raise ValueError("DATABASE_URL não encontrado.")
 
-# Grupo Casa dos Ninjas: mensagens auxiliares do bot são apagadas silenciosamente aqui.
 CASA_DOS_NINJAS_ID = -1002884618014
 
-# Tempo para voltar ao texto original depois da tradução.
+# Tempo para voltar ao texto original após uma tradução
 TEMPO_RETORNO_SEGUNDOS = 30
-
-# Limites do Telegram.
-LIMITE_TEXTO = 4096
-LIMITE_CAPTION = 1024
 
 LANGS = {
     "china": ("zh-CN", "🇨🇳 Chinês"),
@@ -51,68 +33,32 @@ LANGS = {
     "eua": ("en", "🇺🇸 Inglês"),
 }
 
-POSTS_ORIGINAIS: Dict[Tuple[int, int], Dict[str, Any]] = {}
-TAREFAS_RETORNO: Dict[Tuple[int, int], asyncio.Task] = {}
-DB_POOL: Optional[asyncpg.Pool] = None
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
-logger = logging.getLogger("bot_tradutor")
+POSTS_ORIGINAIS = {}
+TAREFAS_RETORNO = {}
+DB_POOL = None
 
 
-# =========================
-# UTILITÁRIOS
-# =========================
-
-def chave_post(chat_id: int, message_id: int) -> Tuple[int, int]:
-    return int(chat_id), int(message_id)
+def chave_post(chat_id, message_id):
+    return (int(chat_id), int(message_id))
 
 
-def teclado_bandeiras(message_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🇨🇳", callback_data=f"traduzir:china:{message_id}"),
-            InlineKeyboardButton("🇧🇷", callback_data=f"traduzir:brasil:{message_id}"),
-            InlineKeyboardButton("🇪🇸", callback_data=f"traduzir:espanha:{message_id}"),
-            InlineKeyboardButton("🇵🇹", callback_data=f"traduzir:portugal:{message_id}"),
-            InlineKeyboardButton("🇺🇸", callback_data=f"traduzir:eua:{message_id}"),
-        ]
-    ])
+def teclado_bandeiras(message_id):
+    return InlineKeyboardMarkup([[ 
+        InlineKeyboardButton("🇨🇳", callback_data=f"traduzir:china:{message_id}"),
+        InlineKeyboardButton("🇧🇷", callback_data=f"traduzir:brasil:{message_id}"),
+        InlineKeyboardButton("🇪🇸", callback_data=f"traduzir:espanha:{message_id}"),
+        InlineKeyboardButton("🇵🇹", callback_data=f"traduzir:portugal:{message_id}"),
+        InlineKeyboardButton("🇺🇸", callback_data=f"traduzir:eua:{message_id}"),
+    ]])
 
 
-def texto_menu() -> str:
-    return "🌐 Traduzir este post:"
-
-
-def cortar_texto(texto: str, tem_caption: bool) -> str:
-    limite = LIMITE_CAPTION if tem_caption else LIMITE_TEXTO
-    if len(texto) <= limite:
-        return texto
-    return texto[: limite - 1] + "…"
-
-
-def limpar_texto_portugal(texto: str) -> str:
-    # Ajuste simples para diferenciar um pouco o PT-PT do PT-BR.
-    substituicoes = {
-        "você": "tu",
-        "Você": "Tu",
-        "vocês": "vós",
-        "Vocês": "Vós",
-    }
-    for origem, destino in substituicoes.items():
-        texto = texto.replace(origem, destino)
-    return texto
-
-
-def entities_para_json(entities) -> Optional[str]:
+def entities_para_json(entities):
     if not entities:
         return None
     return json.dumps([e.to_dict() for e in entities], ensure_ascii=False)
 
 
-def json_para_entities(valor, bot) -> Optional[list]:
+def json_para_entities(valor, bot):
     if not valor:
         return None
 
@@ -122,29 +68,12 @@ def json_para_entities(valor, bot) -> Optional[list]:
     return [MessageEntity.de_json(e, bot) for e in valor]
 
 
-def eh_mensagem_auxiliar_do_bot(msg) -> bool:
-    texto = msg.text or msg.caption or ""
-    return (
-        texto_menu() in texto
-        or texto.startswith("🇨🇳 Chinês")
-        or texto.startswith("🇧🇷 Português Brasil")
-        or texto.startswith("🇪🇸 Espanhol")
-        or texto.startswith("🇵🇹 Português Portugal")
-        or texto.startswith("🇺🇸 Inglês")
-    )
-
-
-# =========================
-# BANCO DE DADOS
-# =========================
-
-async def iniciar_banco() -> None:
+async def iniciar_banco():
     global DB_POOL
-    DB_POOL = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+    DB_POOL = await asyncpg.create_pool(DATABASE_URL)
 
     async with DB_POOL.acquire() as conn:
-        await conn.execute(
-            """
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS telegram_posts (
                 id BIGSERIAL PRIMARY KEY,
                 message_id BIGINT NOT NULL,
@@ -152,42 +81,33 @@ async def iniciar_banco() -> None:
                 texto TEXT NOT NULL,
                 tem_caption BOOLEAN NOT NULL DEFAULT FALSE,
                 entities JSONB,
-                modo TEXT NOT NULL DEFAULT 'original',
+                modo TEXT DEFAULT 'original',
                 bot_message_id BIGINT,
-                criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                criado_em TIMESTAMPTZ DEFAULT NOW(),
+                atualizado_em TIMESTAMPTZ DEFAULT NOW(),
                 UNIQUE (chat_id, message_id)
             );
-            """
-        )
-
-    logger.info("Banco iniciado e tabela telegram_posts verificada.")
+        """)
 
 
-async def fechar_banco() -> None:
-    global DB_POOL
-    if DB_POOL:
-        await DB_POOL.close()
-        DB_POOL = None
-        logger.info("Conexão com banco fechada.")
-
-
-async def limpar_posts_antigos() -> None:
+async def limpar_posts_antigos():
     if not DB_POOL:
         return
 
     async with DB_POOL.acquire() as conn:
-        removidos = await conn.execute(
-            """
+        removidos = await conn.execute("""
             DELETE FROM telegram_posts
             WHERE criado_em < NOW() - INTERVAL '30 days'
-            """
-        )
+        """)
 
-    logger.info("Limpeza do banco: %s", removidos)
+    print(f"LIMPEZA BANCO: {removidos}")
 
 
-async def salvar_post_banco(message_id: int, dados: Dict[str, Any]) -> None:
+async def salvar_post_banco(message_id, dados):
+    """
+    Salva ou atualiza o post original completo.
+    Importante: nunca corta texto aqui.
+    """
     if not DB_POOL:
         return
 
@@ -195,13 +115,7 @@ async def salvar_post_banco(message_id: int, dados: Dict[str, Any]) -> None:
         await conn.execute(
             """
             INSERT INTO telegram_posts (
-                message_id,
-                chat_id,
-                texto,
-                tem_caption,
-                entities,
-                modo,
-                bot_message_id
+                message_id, chat_id, texto, tem_caption, entities, modo, bot_message_id
             )
             VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
             ON CONFLICT (chat_id, message_id)
@@ -219,11 +133,11 @@ async def salvar_post_banco(message_id: int, dados: Dict[str, Any]) -> None:
             bool(dados["tem_caption"]),
             entities_para_json(dados.get("entities")),
             dados.get("modo", "original"),
-            dados.get("bot_message_id"),
+            dados.get("bot_message_id")
         )
 
 
-async def buscar_post_banco(chat_id: int, message_id: int, bot) -> Optional[Dict[str, Any]]:
+async def buscar_post_banco(chat_id, message_id, bot):
     if not DB_POOL:
         return None
 
@@ -235,7 +149,7 @@ async def buscar_post_banco(chat_id: int, message_id: int, bot) -> Optional[Dict
             WHERE chat_id = $1 AND message_id = $2
             """,
             int(chat_id),
-            int(message_id),
+            int(message_id)
         )
 
     if not row:
@@ -246,32 +160,110 @@ async def buscar_post_banco(chat_id: int, message_id: int, bot) -> Optional[Dict
         "texto": row["texto"],
         "tem_caption": row["tem_caption"],
         "entities": json_para_entities(row["entities"], bot),
-        "modo": row["modo"],
-        "bot_message_id": row["bot_message_id"],
+        "modo": row["modo"] or "original",
+        "bot_message_id": row["bot_message_id"]
     }
 
 
-# =========================
-# EDIÇÃO DAS MENSAGENS
-# =========================
+async def atualizar_modo_banco(chat_id, message_id, modo):
+    if not DB_POOL:
+        return
 
-async def editar_original(
-    context: ContextTypes.DEFAULT_TYPE,
-    chat_id: int,
-    message_id: int,
-    texto: str,
-    tem_caption: bool,
-    entities=None,
-) -> None:
-    texto = cortar_texto(texto, tem_caption)
+    async with DB_POOL.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE telegram_posts
+            SET modo = $3, atualizado_em = NOW()
+            WHERE chat_id = $1 AND message_id = $2
+            """,
+            int(chat_id),
+            int(message_id),
+            modo
+        )
 
+
+def dividir_texto_para_traducao(texto, limite=4500):
+    """
+    Divide apenas para enviar ao Google Translator em pedaços seguros.
+    Depois junta tudo de volta. Não corta conteúdo.
+    """
+    if len(texto) <= limite:
+        return [texto]
+
+    partes = []
+    atual = ""
+
+    blocos = re.split(r"(\n\n+)", texto)
+    for bloco in blocos:
+        if len(atual) + len(bloco) <= limite:
+            atual += bloco
+        else:
+            if atual:
+                partes.append(atual)
+                atual = ""
+
+            if len(bloco) <= limite:
+                atual = bloco
+            else:
+                # Último recurso: quebra por frases/palavras, sem perder conteúdo.
+                palavras = bloco.split(" ")
+                pedaco = ""
+                for palavra in palavras:
+                    extra = palavra if not pedaco else " " + palavra
+                    if len(pedaco) + len(extra) <= limite:
+                        pedaco += extra
+                    else:
+                        if pedaco:
+                            partes.append(pedaco)
+                        pedaco = palavra
+                atual = pedaco
+
+    if atual:
+        partes.append(atual)
+
+    return partes
+
+
+def traduzir_texto_completo(texto, idioma):
+    partes = dividir_texto_para_traducao(texto)
+    traduzidas = []
+
+    for parte in partes:
+        if parte.strip():
+            traduzidas.append(
+                GoogleTranslator(source="auto", target=idioma).translate(parte)
+            )
+        else:
+            traduzidas.append(parte)
+
+    return "".join(traduzidas)
+
+
+def ajustar_portugues_portugal(texto):
+    # Ajuste simples, mantendo a lógica que já existia.
+    trocas = {
+        "você": "tu",
+        "Você": "Tu",
+        "vocês": "vós",
+        "Vocês": "Vós",
+    }
+    for original, novo in trocas.items():
+        texto = texto.replace(original, novo)
+    return texto
+
+
+async def editar_post(context, chat_id, message_id, texto, tem_caption, entities=None):
+    """
+    Edita o próprio post. Não faz truncamento.
+    Se o Telegram aceitar o tamanho, publica inteiro.
+    """
     if tem_caption:
         await context.bot.edit_message_caption(
             chat_id=chat_id,
             message_id=message_id,
             caption=texto,
             caption_entities=entities,
-            reply_markup=teclado_bandeiras(message_id),
+            reply_markup=teclado_bandeiras(message_id)
         )
     else:
         await context.bot.edit_message_text(
@@ -279,62 +271,61 @@ async def editar_original(
             message_id=message_id,
             text=texto,
             entities=entities,
-            reply_markup=teclado_bandeiras(message_id),
+            reply_markup=teclado_bandeiras(message_id)
         )
 
 
-async def adicionar_botoes_ao_post(context: ContextTypes.DEFAULT_TYPE, msg) -> None:
+async def adicionar_botoes_no_post(msg):
+    """
+    Adiciona somente o rodapé de botões no próprio post.
+    Não altera texto nem legenda.
+    """
     try:
-        await context.bot.edit_message_reply_markup(
-            chat_id=msg.chat_id,
-            message_id=msg.message_id,
-            reply_markup=teclado_bandeiras(msg.message_id),
-        )
-    except BadRequest as erro:
-        # Algumas mensagens não permitem editar markup. Não quebra o bot.
-        logger.info("Não foi possível adicionar botões ao post %s: %s", msg.message_id, erro)
-    except TelegramError as erro:
-        logger.warning("Erro ao adicionar botões: %s", erro)
+        await msg.edit_reply_markup(reply_markup=teclado_bandeiras(msg.message_id))
+    except Exception as erro:
+        print(f"ERRO AO ADICIONAR BOTÕES: {erro}")
 
 
-async def apagar_auxiliar_no_grupo(context: ContextTypes.DEFAULT_TYPE, msg) -> None:
-    try:
-        await context.bot.delete_message(chat_id=msg.chat_id, message_id=msg.message_id)
-    except TelegramError:
-        pass
+def eh_mensagem_auxiliar_do_bot(msg):
+    texto = msg.text or msg.caption or ""
+    return (
+        "🌐 Traduzir este post" in texto
+        or texto.startswith("🇨🇳 Chinês")
+        or texto.startswith("🇧🇷 Português Brasil")
+        or texto.startswith("🇪🇸 Espanhol")
+        or texto.startswith("🇵🇹 Português Portugal")
+        or texto.startswith("🇺🇸 Inglês")
+    )
 
 
-# =========================
-# HANDLERS
-# =========================
-
-async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
 
     if not msg:
         return
 
-    # No grupo Casa dos Ninjas, apaga mensagens auxiliares do bot e não processa como post novo.
+    # No grupo vinculado, remove mensagens auxiliares antigas do bot, se existirem.
     if msg.chat_id == CASA_DOS_NINJAS_ID:
         if eh_mensagem_auxiliar_do_bot(msg):
-            await apagar_auxiliar_no_grupo(context, msg)
-        return
-
-    # Ignora edições antigas para não sobrescrever o original salvo.
-    if msg.edit_date:
+            try:
+                await context.bot.delete_message(chat_id=msg.chat_id, message_id=msg.message_id)
+            except Exception:
+                pass
         return
 
     texto = msg.text or msg.caption
-
     if not texto:
         return
 
-    if eh_mensagem_auxiliar_do_bot(msg):
+    chave = chave_post(msg.chat_id, msg.message_id)
+    dados_existentes = POSTS_ORIGINAIS.get(chave)
+
+    # Se o post estiver em tradução, não salva a tradução como se fosse original.
+    if dados_existentes and dados_existentes.get("modo") != "original":
         return
 
     tem_caption = bool(msg.caption)
     entities = msg.caption_entities if tem_caption else msg.entities
-    chave = chave_post(msg.chat_id, msg.message_id)
 
     dados = {
         "chat_id": msg.chat_id,
@@ -342,15 +333,15 @@ async def novo_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "tem_caption": tem_caption,
         "entities": entities,
         "modo": "original",
-        "bot_message_id": None,
+        "bot_message_id": None
     }
 
     POSTS_ORIGINAIS[chave] = dados
     await salvar_post_banco(msg.message_id, dados)
-    await adicionar_botoes_ao_post(context, msg)
+    await adicionar_botoes_no_post(msg)
 
 
-async def voltar_original(context: ContextTypes.DEFAULT_TYPE, chat_id: int, post_id: int) -> None:
+async def voltar_original(context, chat_id, post_id):
     await asyncio.sleep(TEMPO_RETORNO_SEGUNDOS)
 
     chave = chave_post(chat_id, post_id)
@@ -362,162 +353,119 @@ async def voltar_original(context: ContextTypes.DEFAULT_TYPE, chat_id: int, post
             POSTS_ORIGINAIS[chave] = dados
 
     if not dados:
-        TAREFAS_RETORNO.pop(chave, None)
         return
 
     try:
-        await editar_original(
-            context=context,
-            chat_id=dados["chat_id"],
-            message_id=post_id,
-            texto=dados["texto"],
-            tem_caption=dados["tem_caption"],
-            entities=dados.get("entities"),
+        await editar_post(
+            context,
+            dados["chat_id"],
+            post_id,
+            dados["texto"],
+            dados["tem_caption"],
+            dados.get("entities")
         )
-    except BadRequest as erro:
-        logger.info("Não foi possível voltar original do post %s: %s", post_id, erro)
-    except TelegramError as erro:
-        logger.warning("Erro ao voltar original: %s", erro)
+        dados["modo"] = "original"
+        await atualizar_modo_banco(chat_id, post_id, "original")
+    except Exception as erro:
+        print(f"ERRO AO VOLTAR ORIGINAL: {erro}")
     finally:
-        TAREFAS_RETORNO.pop(chave, None)
+        if chave in TAREFAS_RETORNO:
+            del TAREFAS_RETORNO[chave]
 
 
-async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def clicar_bandeira(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-
-    if not query:
-        return
 
     try:
         await query.answer()
-    except TelegramError:
+    except Exception:
         pass
 
     try:
-        _, pais, post_id_texto = query.data.split(":")
-        post_id = int(post_id_texto)
-    except Exception:
-        return
+        _, pais, post_id = query.data.split(":")
+        post_id = int(post_id)
 
-    if pais not in LANGS:
-        return
+        if not query.message:
+            return
 
-    if not query.message:
-        return
+        chat_id = query.message.chat_id
+        chave = chave_post(chat_id, post_id)
 
-    chat_id = query.message.chat_id
-    chave = chave_post(chat_id, post_id)
-    dados = POSTS_ORIGINAIS.get(chave)
+        dados = POSTS_ORIGINAIS.get(chave)
+        if not dados:
+            dados = await buscar_post_banco(chat_id, post_id, context.bot)
+            if dados:
+                POSTS_ORIGINAIS[chave] = dados
 
-    if not dados:
-        dados = await buscar_post_banco(chat_id, post_id, context.bot)
-        if dados:
-            POSTS_ORIGINAIS[chave] = dados
+        if not dados:
+            return
 
-    if not dados:
-        return
+        texto_original = dados["texto"]
+        tem_caption = dados["tem_caption"]
+        entities = dados.get("entities")
 
-    texto_original = dados["texto"]
-    tem_caption = dados["tem_caption"]
-    entities = dados.get("entities")
+        if pais == "brasil":
+            if chave in TAREFAS_RETORNO:
+                TAREFAS_RETORNO[chave].cancel()
+                del TAREFAS_RETORNO[chave]
 
-    # 🇧🇷 retorna imediatamente ao original.
-    if pais == "brasil":
-        tarefa = TAREFAS_RETORNO.pop(chave, None)
-        if tarefa:
-            tarefa.cancel()
-
-        try:
-            await editar_original(
-                context=context,
-                chat_id=chat_id,
-                message_id=post_id,
-                texto=texto_original,
-                tem_caption=tem_caption,
-                entities=entities,
+            await editar_post(
+                context,
+                chat_id,
+                post_id,
+                texto_original,
+                tem_caption,
+                entities
             )
-        except TelegramError as erro:
-            logger.warning("Erro ao restaurar original manualmente: %s", erro)
-        return
+            dados["modo"] = "original"
+            await atualizar_modo_banco(chat_id, post_id, "original")
+            return
 
-    idioma, _nome = LANGS[pais]
+        idioma, _ = LANGS[pais]
 
-    try:
-        traducao = GoogleTranslator(source="auto", target=idioma).translate(texto_original)
-    except Exception as erro:
-        logger.warning("Erro na tradução: %s", erro)
-        return
+        traducao = traduzir_texto_completo(texto_original, idioma)
 
-    if pais == "portugal":
-        traducao = limpar_texto_portugal(traducao)
+        if pais == "portugal":
+            traducao = ajustar_portugues_portugal(traducao)
 
-    traducao = cortar_texto(traducao, tem_caption)
+        # Regra principal: nunca cortar a tradução.
+        dados["modo"] = pais
+        await atualizar_modo_banco(chat_id, post_id, pais)
 
-    try:
-        # Na tradução, não reaplicamos entities para evitar offsets quebrados.
-        await editar_original(
-            context=context,
-            chat_id=chat_id,
-            message_id=post_id,
-            texto=traducao,
-            tem_caption=tem_caption,
-            entities=None,
+        await editar_post(
+            context,
+            chat_id,
+            post_id,
+            traducao,
+            tem_caption,
+            None
         )
-    except BadRequest as erro:
-        logger.info("Não foi possível editar post traduzido %s: %s", post_id, erro)
-        return
-    except TelegramError as erro:
-        logger.warning("Erro ao editar tradução: %s", erro)
-        return
 
-    tarefa_antiga = TAREFAS_RETORNO.pop(chave, None)
-    if tarefa_antiga:
-        tarefa_antiga.cancel()
+        if chave in TAREFAS_RETORNO:
+            TAREFAS_RETORNO[chave].cancel()
+            del TAREFAS_RETORNO[chave]
 
-    TAREFAS_RETORNO[chave] = asyncio.create_task(voltar_original(context, chat_id, post_id))
+        TAREFAS_RETORNO[chave] = asyncio.create_task(
+            voltar_original(context, chat_id, post_id)
+        )
 
-
-async def erro_global(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    erro = context.error
-    if isinstance(erro, (TimedOut, NetworkError)):
-        logger.warning("Erro temporário de rede/Telegram: %s", erro)
-    elif isinstance(erro, Forbidden):
-        logger.warning("Bot sem permissão ou removido de chat: %s", erro)
-    else:
-        logger.exception("Erro não tratado: %s", erro)
+    except Exception as erro:
+        print(f"ERRO AO TRADUZIR: {erro}")
 
 
-# =========================
-# INICIALIZAÇÃO
-# =========================
-
-async def post_init(app: Application) -> None:
+async def post_init(app):
     await iniciar_banco()
     await limpar_posts_antigos()
 
 
-async def post_shutdown(app: Application) -> None:
-    for tarefa in list(TAREFAS_RETORNO.values()):
-        tarefa.cancel()
-    TAREFAS_RETORNO.clear()
-    await fechar_banco()
+def main():
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
-
-def main() -> None:
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .post_init(post_init)
-        .post_shutdown(post_shutdown)
-        .build()
-    )
-
-    app.add_handler(CallbackQueryHandler(clicar_bandeira, pattern=r"^traduzir:"))
     app.add_handler(MessageHandler(filters.ALL, novo_post))
-    app.add_error_handler(erro_global)
+    app.add_handler(CallbackQueryHandler(clicar_bandeira, pattern="^traduzir:"))
 
-    logger.info("BOT DE TRADUÇÃO INICIADO")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    print("BOT DE TRADUÇÃO INICIADO")
+    app.run_polling()
 
 
 if __name__ == "__main__":
